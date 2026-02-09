@@ -146,13 +146,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Add currentExamType to filter scraper results
                 url = `/scrape/myschool?subject_url=${encodeURIComponent(subjectUrl)}&subject_name=${encodeURIComponent(subjectName)}&limit=200&min_year=2000&exam_type=${currentExamType}`;
             } else if (source === 'aloc') {
-                url = `/fetch-aloc?subject=${encodeURIComponent(subjectName)}`;
+                url = `/fetch-aloc?subject=${encodeURIComponent(subjectName)}&count=100`;
             }
 
             const response = await fetch(url);
             const result = await response.json();
 
             if (!response.ok) {
+                if (response.status === 403) {
+                    throw new Error("Cloudflare is blocking Render's IP address. Please use the ALOC source for ingestion, or run the app locally to use MySchool.");
+                }
                 throw new Error(result.detail || 'Ingestion failed');
             }
 
@@ -161,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fetchQuestions();
         } catch (error) {
             console.error('Error ingesting questions:', error);
-            alert(`Failed to ingest questions: ${error.message}`);
+            alert(`Attention: ${error.message}`);
         } finally {
             ingestBtn.disabled = false;
             ingestBtn.textContent = 'Ingest Questions';

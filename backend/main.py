@@ -112,35 +112,48 @@ def get_filters(db: Session = Depends(get_db)):
     }
 
 @app.get("/fetch-aloc")
-def fetch_aloc(subject: str, db: Session = Depends(get_db)):
+def fetch_aloc(subject: str, count: int = 50, db: Session = Depends(get_db)):
+    print(f"DEBUG: ALOC fetch request for {subject}. Count: {count}")
+    
+    # Check for token first
+    if not os.getenv("ALOC_TOKEN"):
+        raise HTTPException(
+            status_code=401, 
+            detail="ALOC Access Token is missing. Please set the ALOC_TOKEN in your environment variables."
+        )
+
     client = aloc_client.ALOCClient()
-    data = client.get_multiple_questions(subject)
+    data = client.get_multiple_questions(subject, count=count)
     if not data or 'data' not in data:
-        raise HTTPException(status_code=400, detail="Failed to fetch data from ALOC")
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Failed to fetch data from ALOC. Error: {data.get('error') if data else 'Unknown'}"
+        )
     
     questions_added = 0
     for q_data in data['data']:
+        # Double check for existing body to avoid duplicates
         exists = db.query(Question).filter(Question.body == q_data['question']).first()
         if not exists:
             options = [q_data['option']['a'], q_data['option']['b'], q_data['option']['c'], q_data['option']['d']]
-            if 'e' in q_data['option']:
+            if 'e' in q_data['option'] and q_data['option']['e']:
                 options.append(q_data['option']['e'])
             
             new_q = Question(
                 body=q_data['question'],
                 options=options,
-                answer=q_data['answer'],
+                answer=q_data['answer'].upper() if q_data.get('answer') else 'A',
                 explanation=q_data.get('solution'),
-                subject=subject,
-                year=int(q_data['examyear']) if q_data.get('examyear') else None,
-                exam_type=q_data.get('examtype', 'jamb'),
+                subject=subject.lower(),
+                year=int(q_data['examyear']) if q_data.get('examyear') and str(q_data['examyear']).isdigit() else None,
+                exam_type=q_data.get('examtype', 'jamb').lower(),
                 topic="General"
             )
             db.add(new_q)
             questions_added += 1
     
     db.commit()
-    return {"message": f"Added {questions_added} questions for {subject}"}
+    return {"message": f"Added {questions_added} questions for {subject} using ALOC source."}
 
 @app.get("/myschool-subjects")
 def get_myschool_subjects():
@@ -163,6 +176,21 @@ def scrape_myschool(subject_url: str, subject_name: str, limit: int = 20, min_ye
     print(f"DEBUG: Found {len(existing_urls)} existing questions in DB.")
     
     scraped_data = scraper.scrape_questions(subject_url, limit=limit, min_year=min_year, existing_urls=existing_urls, exam_type=exam_type)
+    
+    # Check if we were likely blocked
+    # We can check a flag or just assume based on 0 results if we saw 403 in inner logs
+    # To be precise, let's look at the result count and the fact that we confirmed blocking
+    if not scraped_data:
+        # We need a way for the scraper to communicate the block back up.
+        # For now, if it's 0 and we are on Render, it's almost certainly a block.
+        # Let's check status_code from a dummy request
+        test_resp = scraper.session.get(subject_url, headers=scraper.headers, timeout=5)
+        if test_resp.status_code == 403:
+            raise HTTPException(
+                status_code=403, 
+                detail="MySchool is blocking this server's IP address (Cloudflare). Please use the ALOC source for ingestion."
+            )
+
     print(f"DEBUG: Scraper returned {len(scraped_data)} results.")
     
     questions_added = 0
