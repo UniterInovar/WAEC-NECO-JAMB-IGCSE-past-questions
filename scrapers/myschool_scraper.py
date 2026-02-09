@@ -270,74 +270,93 @@ class MySchoolScraper:
 
     def scrape_questions(self, subject_url, limit=50, min_year=2000, existing_urls=None, exam_type=None):
         questions = []
-        page = 1
+        import datetime
+        current_year = datetime.datetime.now().year
         existing_urls = set(existing_urls or [])
         
-        while len(questions) < limit:
-            # Append exam_type to URL if specified. Check if '?' already exists.
-            base_query = f"{subject_url}?page={page}"
-            if exam_type:
-                base_query += f"&exam_type={exam_type}"
-            
-            url = base_query
-            soup = self.get_soup(url)
-            if not soup:
-                break
-
-            # Find all links that contain "View Answer & Discuss" in their text
-            all_links = soup.find_all('a')
-            detail_links = []
-            for l in all_links:
-                if "View Answer & Discuss" in l.get_text():
-                    detail_links.append(l)
-
-            if not detail_links:
-                break
-
-            urls_to_fetch = []
-            for link in detail_links:
-                detail_url = link.get('href')
-                if not detail_url:
-                    continue
-                if not detail_url.startswith('http'):
-                    detail_url = self.base_url + detail_url
-                    
-                if detail_url not in existing_urls:
-                    urls_to_fetch.append(detail_url)
-                else:
-                    print(f"Skipping already ingested URL: {detail_url}")
-
-            # Process in batches or with parallel fetching
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                results = list(executor.map(self.process_detail_page, urls_to_fetch))
-
-            for res in results:
-                if res and (not res['year'] or res['year'] >= min_year):
-                    # Strict filtering: If user requested specific exam_type, ensure we got it.
-                    # This prevents MySchool from returning default (JAMB) questions if the param is invalid (e.g. for IGCSE)
-                    if exam_type:
-                        # Normalize for comparison
-                        fetched_type = res['exam_type'].lower() if res['exam_type'] else ''
-                        target_type = exam_type.lower()
-                        
-                        # exact match or some common variations handling could go here
-                        if fetched_type != target_type:
-                            # Use print to debug but skip adding
-                            # print(f"Skipping mismatch: Requested {target_type}, got {fetched_type}")
-                            continue
-
-                    if len(questions) < limit:
-                        # Double check for duplicates being added in the same session
-                        # This happens if a question appears on multiple pages (rare but possible)
-                        if res['source_url'] not in [q['source_url'] for q in questions]:
-                            questions.append(res)
-            
+        # Determine exam types to scrape
+        target_types = [exam_type] if exam_type else ['jamb', 'waec', 'neco']
+        
+        for etype in target_types:
             if len(questions) >= limit:
                 break
                 
-            pagination = soup.find('a', href=re.compile(rf'page={page + 1}'))
-            if not pagination:
-                break
-            page += 1
-            
+            # Iterate backwards from current year to min_year
+            for year in range(current_year, min_year - 1, -1):
+                if len(questions) >= limit:
+                    break
+                    
+                page = 1
+                while len(questions) < limit:
+                    # Construct URL with both exam_type and exam_year for maximum precision
+                    url = f"{subject_url}?page={page}&exam_type={etype}&exam_year={year}"
+                    print(f"Scraping: {etype} {year} Page {page}")
+                    
+                    soup = self.get_soup(url)
+                    if not soup:
+                        break
+
+                    # Find all links that contain "View Answer & Discuss"
+                    all_links = soup.find_all('a')
+                    detail_links = []
+                    for l in all_links:
+                        if "View Answer & Discuss" in l.get_text():
+                            detail_links.append(l)
+
+                    if not detail_links:
+                        # No more questions for this specific year/type
+                        break
+
+                    urls_to_fetch = []
+                    for link in detail_links:
+                        detail_url = link.get('href')
+                        if not detail_url:
+                            continue
+                        if not detail_url.startswith('http'):
+                            detail_url = self.base_url + detail_url
+                            
+                        if detail_url not in existing_urls:
+                            urls_to_fetch.append(detail_url)
+                        else:
+                            # In case we hit duplicates, but usually years are distinct
+                            pass
+
+                    if not urls_to_fetch:
+                        # If all questions on this page are already ingested, try the next page
+                        # but check if we should just break if we've seen enough
+                        if page > 5: # Safety break if we aren't finding new things
+                            break
+                        page += 1
+                        continue
+
+                    # Process in parallel
+                    with ThreadPoolExecutor(max_workers=10) as executor:
+                        results = list(executor.map(self.process_detail_page, urls_to_fetch))
+
+                    for res in results:
+                        if res:
+                            # Verify year/type again as MySchool sometimes serves defaults
+                            res_year = res['year']
+                            res_type = res['exam_type'].lower() if res['exam_type'] else ''
+                            
+                            # Add if it matches our criteria
+                            if res_year == year and res_type == etype:
+                                if len(questions) < limit:
+                                    if res['source_url'] not in [q['source_url'] for q in questions]:
+                                        questions.append(res)
+                    
+                    # Optimization: If we fetched a whole page and found 0 matching questions
+                    # it means MySchool is likely serving default questions because the year has no data.
+                    # We should skip to the next year.
+                    matching_in_this_batch = [r for r in results if r and r['year'] == year and (r['exam_type'].lower() if r['exam_type'] else '') == etype]
+                    if results and not matching_in_this_batch:
+                        print(f"No matching questions found for {etype} {year} on Page {page}. Skipping year.")
+                        break
+                    
+                    # Check if there is a next page for THIS specific year/type
+                    pagination = soup.find('a', href=re.compile(rf'page={page + 1}'))
+                    if not pagination:
+                        break
+                    page += 1
+                    
         return questions
