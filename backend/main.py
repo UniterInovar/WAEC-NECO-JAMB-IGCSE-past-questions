@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from . import models, aloc_client
 from .models import SessionLocal, engine, Question, init_db
@@ -183,6 +184,10 @@ def scrape_myschool(subject_url: str, subject_name: str, limit: int = 20, min_ye
     db.commit()
     return {"message": f"Scraped and added {questions_added} questions for {subject_name} (Year {min_year}+)"}
 
-@app.get("/")
-def root():
-    return {"message": "Welcome to the Past Questions API"}
+@app.get("/api/health")
+def health_check():
+    return {"status": "healthy", "message": "Past Questions API is running"}
+
+# Mount frontend static files
+# This should be at the end to avoid intercepting API routes
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")

@@ -7,3 +7,5 @@ sqlalchemy
 pymupdf
 pdfplumber
 python-dotenv
+gunicorn
+aiofiles

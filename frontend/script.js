@@ -14,7 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchFilters() {
         try {
-            const response = await fetch('http://127.0.0.1:8080/filters');
+            const response = await fetch('/filters');
             const data = await response.json();
 
             // Populate Year Select
@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchSubjects() {
         try {
             subjectSelect.innerHTML = '<option>Loading subjects...</option>';
-            const response = await fetch('http://127.0.0.1:8080/myschool-subjects');
+            const response = await fetch('/myschool-subjects');
             myschoolSubjects = await response.json();
 
             if (myschoolSubjects.length > 0) {
@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const year = yearSelect.value;
             const topic = topicSelect.value;
-            const url = `http://127.0.0.1:8080/questions?subject=${currentSubject}&exam_type=${currentExamType}${year ? `&year=${year}` : ''}${topic ? `&topic=${encodeURIComponent(topic)}` : ''}`;
+            const url = `/questions?subject=${currentSubject}&exam_type=${currentExamType}${year ? `&year=${year}` : ''}${topic ? `&topic=${encodeURIComponent(topic)}` : ''}`;
 
             const response = await fetch(url);
             let questions = await response.json();
@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clearDbBtn.disabled = true;
         clearDbBtn.textContent = 'Clearing...';
         try {
-            const response = await fetch('http://127.0.0.1:8080/clear-questions');
+            const response = await fetch('/clear-questions');
             const result = await response.json();
             alert(result.message);
             fetchQuestions(); // Refresh UI
@@ -144,9 +144,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 const subjectUrl = selectedOption.dataset.url;
                 // Add currentExamType to filter scraper results
-                url = `http://127.0.0.1:8080/scrape/myschool?subject_url=${encodeURIComponent(subjectUrl)}&subject_name=${encodeURIComponent(subjectName)}&limit=200&min_year=2000&exam_type=${currentExamType}`;
+                url = `/scrape/myschool?subject_url=${encodeURIComponent(subjectUrl)}&subject_name=${encodeURIComponent(subjectName)}&limit=200&min_year=2000&exam_type=${currentExamType}`;
             } else if (source === 'aloc') {
-                url = `http://127.0.0.1:8080/fetch-aloc?subject=${encodeURIComponent(subjectName)}`;
+                url = `/fetch-aloc?subject=${encodeURIComponent(subjectName)}`;
             }
 
             const response = await fetch(url);
