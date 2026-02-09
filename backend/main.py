@@ -155,12 +155,15 @@ def clear_questions(db: Session = Depends(get_db)):
 
 @app.get("/scrape/myschool")
 def scrape_myschool(subject_url: str, subject_name: str, limit: int = 20, min_year: int = 2000, exam_type: Optional[str] = None, db: Session = Depends(get_db)):
+    print(f"DEBUG: Scrape request for {subject_name} ({exam_type}) from {subject_url}. Min Year: {min_year}, Limit: {limit}")
     scraper = MySchoolScraper()
     
     # Get existing source_urls to skip them in the scraper
     existing_urls = [q.source_url for q in db.query(Question.source_url).all() if q.source_url]
+    print(f"DEBUG: Found {len(existing_urls)} existing questions in DB.")
     
     scraped_data = scraper.scrape_questions(subject_url, limit=limit, min_year=min_year, existing_urls=existing_urls, exam_type=exam_type)
+    print(f"DEBUG: Scraper returned {len(scraped_data)} results.")
     
     questions_added = 0
     for q_data in scraped_data:

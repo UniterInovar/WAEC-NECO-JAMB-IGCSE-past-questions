@@ -337,20 +337,28 @@ class MySchoolScraper:
                         if res:
                             # Verify year/type again as MySchool sometimes serves defaults
                             res_year = res['year']
-                            res_type = res['exam_type'].lower() if res['exam_type'] else ''
+                            res_type = (res['exam_type'].lower() if res['exam_type'] else '')
+                            target_type = etype.lower()
                             
                             # Add if it matches our criteria
-                            if res_year == year and res_type == etype:
+                            # Robustness: trust the requested year if page-level extraction fails
+                            year_match = (res_year == year or res_year is None)
+                            type_match = (res_type == target_type or res_type == '')
+                            
+                            if year_match and type_match:
                                 if len(questions) < limit:
                                     if res['source_url'] not in [q['source_url'] for q in questions]:
                                         questions.append(res)
+                            else:
+                                print(f"  Debug: Skipped question due to mismatch (Got {res_type} {res_year}, Expected {target_type} {year})")
                     
                     # Optimization: If we fetched a whole page and found 0 matching questions
                     # it means MySchool is likely serving default questions because the year has no data.
                     # We should skip to the next year.
-                    matching_in_this_batch = [r for r in results if r and r['year'] == year and (r['exam_type'].lower() if r['exam_type'] else '') == etype]
+                    matching_in_this_batch = [r for r in results if r and (r['year'] == year or r['year'] is None) and (not r['exam_type'] or r['exam_type'].lower() == target_type)]
+                    
                     if results and not matching_in_this_batch:
-                        print(f"No matching questions found for {etype} {year} on Page {page}. Skipping year.")
+                        print(f"No matching questions found for {etype} {year} on Page {page} (found {len(results)} other results). Skipping year.")
                         break
                     
                     # Check if there is a next page for THIS specific year/type
