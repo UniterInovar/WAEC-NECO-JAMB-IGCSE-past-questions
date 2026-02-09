@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Past Questions App</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div id="app">
+        <aside class="sidebar">
+            <div class="logo">PQ App</div>
+            <nav>
+                <ul>
+                    <li class="active" data-type="jamb">JAMB</li>
+                    <li data-type="waec">WAEC</li>
+                    <li data-type="neco">NECO</li>
+                    <li data-type="igcse">IGCSE</li>
+                </ul>
+            </nav>
+        </aside>
+        <main class="content">
+            <header>
+                <h1 id="current-title">JAMB Biology Past Questions</h1>
+                <div class="controls">
+                    <select id="subject-select">
+                        <option value="biology">Biology</option>
+                        <option value="chemistry">Chemistry</option>
+                    </select>
+                    <select id="year-select">
+                        <option value="">All Years</option>
+                    </select>
+                    <select id="topic-select">
+                        <option value="">All Topics</option>
+                    </select>
+                    <select id="source-select">
+                        <option value="myschool">MySchool (Scraper)</option>
+                        <option value="aloc">ALOC (API)</option>
+                    </select>
+                    <button id="ingest-btn">Ingest Questions</button>
+                    <button id="clear-db-btn" class="danger">Clear DB</button>
+                    <input type="text" id="search-input" placeholder="Search questions...">
+                </div>
+            </header>
+            <section id="question-list">
+                <!-- Questions will be injected here -->
+                <div class="question-card">
+                    <p class="question-text">Loading questions...</p>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,343 @@
+import requests
+from bs4 import BeautifulSoup
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+import copy
+
+class MySchoolScraper:
+    def __init__(self):
+        self.base_url = "https://myschool.ng"
+        self.session = requests.Session()
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+
+    def get_soup(self, url):
+        try:
+            response = self.session.get(url, headers=self.headers, timeout=10)
+            return BeautifulSoup(response.text, 'html.parser')
+        except Exception as e:
+            print(f"Error fetching {url}: {e}")
+            return None
+
+    def scrape_subjects(self):
+        import json
+        import os
+        
+        cache_file = "subjects.json"
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Error reading cache: {e}")
+
+        url = f"{self.base_url}/classroom"
+        soup = self.get_soup(url)
+        subjects = []
+        if soup:
+            links = soup.select('a[href*="/classroom/"]')
+            seen_urls = set()
+            for link in links:
+                name = link.text.strip()
+                href = link['href']
+                if not href.startswith('http'):
+                    href = self.base_url + href
+                
+                # Extract the part after /classroom/
+                path = href.replace(self.base_url + "/classroom/", "")
+                
+                # Filter for subject landing pages (shallow path, no weird keywords)
+                if path and '/' not in path and name:
+                    # Skip meta-links and noise
+                    exclude = ['video', 'news', 'jamb', 'waec', 'neco', 'novel', 'brochure', 'syllabus', 'questions', 'performance', 'exam', 'member', 'practice', 'topics']
+                    if not any(x in path.lower() for x in exclude) and "Questions" not in name and "Exam" not in name:
+                        if href not in seen_urls:
+                            subjects.append({'name': name, 'url': href})
+                            seen_urls.add(href)
+        
+        if subjects:
+            try:
+                with open(cache_file, 'w') as f:
+                    json.dump(subjects, f)
+            except Exception as e:
+                print(f"Error writing cache: {e}")
+                
+        return subjects
+
+    def extract_details_from_soup(self, soup, detail_url):
+        if not soup:
+            return None, None, None, None, None, None
+
+        # Extract answer
+        answer_tag = soup.find(string=re.compile(r'Correct Answer: Option'))
+        answer = ""
+        if answer_tag:
+            answer = answer_tag.split('Option')[-1].strip()
+
+        # Extract explanation
+        explanation_header = soup.find('h5', string=re.compile(r'Explanation'))
+        explanation = ""
+        if explanation_header:
+            explanation_para = explanation_header.find_next('p')
+            if explanation_para:
+                explanation = self.clean_scientific_text(explanation_para)
+            else:
+                next_node = explanation_header.next_sibling
+                if next_node and hasattr(next_node, 'text'):
+                    explanation = self.clean_scientific_text(next_node)
+                else:
+                    explanation = ""
+
+        # Extract exam type, year and topic
+        topic = "General"
+        tags = soup.select('a[href*="/classroom/topic/"]')
+        if tags:
+            topic = tags[0].text.strip()
+
+        # Extract exam type and year
+        exam_link = soup.select_one('a[href*="exam_type="]')
+        exam_type = "jamb"
+        year = None
+        if exam_link:
+            href = exam_link['href']
+            type_match = re.search(r'exam_type=([^&]+)', href)
+            year_match = re.search(r'exam_year=(\d+)', href)
+            if type_match:
+                exam_type = type_match.group(1)
+            if year_match:
+                year = int(year_match.group(1))
+
+        return answer, explanation, exam_type, year, topic, detail_url
+
+    def clean_scientific_text(self, node):
+        """Processes a BeautifulSoup node to preserve images and clean scientific text."""
+        if isinstance(node, str):
+            text = node
+        else:
+            # For BeautifulSoup nodes, handle images and then get content
+            for img in node.find_all('img'):
+                if 'src' in img.attrs:
+                    src = img['src']
+                    if src.startswith('/'):
+                        img['src'] = self.base_url + src
+                    # Ensure images have some basic styling if needed
+                    img['style'] = "max-width: 100%; height: auto; display: block; margin: 10px 0;"
+            
+            # Use decode_contents to keep tags like <sub>, <sup>, and <img>
+            text = node.decode_contents()
+
+        if not text:
+            return ""
+
+        # Remove LaTeX delimiters which often cause (CO2) instead of CO2
+        text = text.replace(r'\(', '').replace(r'\)', '').replace(r'\[', '').replace(r'\]', '')
+
+        # Handle LaTeX style subscripts/superscripts
+        text = re.sub(r'\\?_\{([^}]+)\}', r'<sub>\1</sub>', text)
+        text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
+        text = re.sub(r'_(\d)', r'<sub>\1</sub>', text)
+        text = re.sub(r'\\?\^\{([^}]+)\}', r'<sup>\1</sup>', text)
+        text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
+        text = re.sub(r'\^(\d)', r'<sup>\1</sup>', text)
+        
+        # Chemical symbols and arrows
+        text = text.replace(r'\to', '→').replace(r'\uparrow', '↑').replace(r'\downarrow', '↓')
+        text = text.replace(r'\lambda', 'λ').replace(r'\theta', 'θ')
+        text = text.replace(r'\times', '×').replace(r'\div', '÷')
+
+        # Handle plain text chemical formulas like CO2, H2O (capital letter + digit)
+        # Only if not already inside a tag
+        def chem_sub(match):
+            return f"{match.group(1)}<sub>{match.group(2)}</sub>"
+        
+        # Pattern to find chemical formulas: Capital letter (+ lowercase) followed by digits
+        # Examples: CO2, H2SO4, KMnO4
+        text = re.sub(r'([A-Z][a-z]?)([2-9])', chem_sub, text)
+        
+        # Electronic configuration (spdf notation) - e.g., 1s2 2s2 2p6
+        # Look for digit, [spdf], then digit(s). Avoid messing up other words.
+        # Regex: \b([1-7][spdf])(\d{1,2})\b
+        text = re.sub(r'\b([1-7][spdf])(\d{1,2})\b', r'\1<sup>\2</sup>', text)
+
+        # Handle LaTeX fractions \frac{num}{den}
+        # We replace them with simple inline fraction: <sup>num</sup>/<sub>den</sub>
+        # This handles nested braces specifically for simple cases usually found in these questions
+        text = re.sub(r'\\frac\{([^}]+)\}\{([^}]+)\}', r'<sup>\1</sup>&frasl;<sub>\2</sub>', text)
+
+        return text.strip()
+
+    def process_detail_page(self, detail_url):
+        """Worker function for multi-threaded scraping."""
+        detail_soup = self.get_soup(detail_url)
+        if not detail_soup:
+            return None
+        
+        answer, explanation, exam_type, year, topic, source_url = self.extract_details_from_soup(detail_soup, detail_url)
+        
+        # Look for the full body in question-desc
+        body_container = detail_soup.find('div', class_='question-desc')
+        if body_container:
+            # Clone and remove badges
+            body_copy = copy.copy(body_container)
+            for badge in body_copy.find_all('a'):
+                badge.decompose()
+            for br in body_copy.find_all('br'):
+                br.decompose() # Remove leading BRs if any
+            
+            # Specific cleanup for video links/text often found in myschool
+            for vid in body_copy.find_all('a', href=True):
+                if 'explanation_video' in vid['href'] or 'video' in vid.text.lower():
+                    vid.decompose()
+            
+            # Remove text nodes that are just "View Explanation" or similar artifacts if they remain
+            # Only remove if they are short, to avoid accidentally removing questions containing these words
+            for string in body_copy.find_all(string=True):
+                s_lower = string.lower()
+                if ("explanation_video" in s_lower or "[below]" in s_lower or "view answer" in s_lower) and len(string) < 60:
+                    string.replace_with("")
+
+            body = self.clean_scientific_text(body_copy)
+        else:
+            # Fallback to h3 if question-desc not found
+            body_tag = detail_soup.find('h3')
+            if not body_tag:
+                return None
+            body = self.clean_scientific_text(body_tag)
+            body = re.sub(r'\.{3,}$', '', body)
+
+        options = []
+        valid_items = []
+        
+        # Try to find options in ul.list-unstyled first
+        options_container = detail_soup.find('ul', class_='list-unstyled')
+        if options_container:
+            valid_items = options_container.find_all('li')
+        else:
+            # Fallback as before
+            found_body = False
+            for item in detail_soup.find_all(['h3', 'li', 'h4', 'h5']):
+                if item.name == 'h3' and 'page-title' in item.get('class', []):
+                    found_body = True
+                    continue
+                if not found_body:
+                    continue
+                if item.name in ['h4', 'h5'] and ('Contribution' in item.text or 'Quick Question' in item.text or 'Sign In' in item.text):
+                    break
+                if item.name == 'li':
+                    valid_items.append(item)
+
+        letters = ['A', 'B', 'C', 'D', 'E']
+        for letter in letters:
+            found = False
+            for item in valid_items:
+                text = item.get_text(strip=True)
+                # Check if it starts with "A." or "A " or "A)" or just "A" followed by content
+                if re.match(rf'^{letter}[.\s\)]?\s*.+', text, re.IGNORECASE):
+                    # Clone node to avoid modifying the original soup
+                    item_copy = copy.copy(item)
+                    strong = item_copy.find('strong')
+                    # Decompose the prefix if it's in <strong> (common)
+                    if strong and re.match(rf'^{letter}[.\s\)]?\s*$', strong.get_text(strip=True), re.IGNORECASE):
+                        strong.decompose()
+                    
+                    # Clean the scientific text in this node
+                    cleaned_html = self.clean_scientific_text(item_copy)
+                    # Strip leading dots/whitespace/letter prefixes balance
+                    # Only strip if it's literally A., A), or "A " (with a space)
+                    # This avoids stripping "A" from "Absorption"
+                    cleaned_html = re.sub(rf'^{letter}([.\s\)])\s*', '', cleaned_html, flags=re.IGNORECASE)
+                    cleaned_html = re.sub(r'^[\s\.]+', '', cleaned_html).strip()
+                    
+                    options.append(cleaned_html)
+                    found = True
+                    break
+            if not found:
+                if not (year and year >= 2000 and letter == 'E'):
+                    options.append("")
+
+        return {
+            'body': body,
+            'options': options,
+            'answer': answer,
+            'explanation': explanation,
+            'exam_type': exam_type,
+            'year': year,
+            'topic': topic,
+            'source_url': source_url
+        }
+
+    def scrape_questions(self, subject_url, limit=50, min_year=2000, existing_urls=None, exam_type=None):
+        questions = []
+        page = 1
+        existing_urls = set(existing_urls or [])
+        
+        while len(questions) < limit:
+            # Append exam_type to URL if specified. Check if '?' already exists.
+            base_query = f"{subject_url}?page={page}"
+            if exam_type:
+                base_query += f"&exam_type={exam_type}"
+            
+            url = base_query
+            soup = self.get_soup(url)
+            if not soup:
+                break
+
+            # Find all links that contain "View Answer & Discuss" in their text
+            all_links = soup.find_all('a')
+            detail_links = []
+            for l in all_links:
+                if "View Answer & Discuss" in l.get_text():
+                    detail_links.append(l)
+
+            if not detail_links:
+                break
+
+            urls_to_fetch = []
+            for link in detail_links:
+                detail_url = link.get('href')
+                if not detail_url:
+                    continue
+                if not detail_url.startswith('http'):
+                    detail_url = self.base_url + detail_url
+                    
+                if detail_url not in existing_urls:
+                    urls_to_fetch.append(detail_url)
+                else:
+                    print(f"Skipping already ingested URL: {detail_url}")
+
+            # Process in batches or with parallel fetching
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                results = list(executor.map(self.process_detail_page, urls_to_fetch))
+
+            for res in results:
+                if res and (not res['year'] or res['year'] >= min_year):
+                    # Strict filtering: If user requested specific exam_type, ensure we got it.
+                    # This prevents MySchool from returning default (JAMB) questions if the param is invalid (e.g. for IGCSE)
+                    if exam_type:
+                        # Normalize for comparison
+                        fetched_type = res['exam_type'].lower() if res['exam_type'] else ''
+                        target_type = exam_type.lower()
+                        
+                        # exact match or some common variations handling could go here
+                        if fetched_type != target_type:
+                            # Use print to debug but skip adding
+                            # print(f"Skipping mismatch: Requested {target_type}, got {fetched_type}")
+                            continue
+
+                    if len(questions) < limit:
+                        # Double check for duplicates being added in the same session
+                        # This happens if a question appears on multiple pages (rare but possible)
+                        if res['source_url'] not in [q['source_url'] for q in questions]:
+                            questions.append(res)
+            
+            if len(questions) >= limit:
+                break
+                
+            pagination = soup.find('a', href=re.compile(rf'page={page + 1}'))
+            if not pagination:
+                break
+            page += 1
+            
+        return questions
