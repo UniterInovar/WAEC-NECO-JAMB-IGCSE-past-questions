@@ -10,12 +10,32 @@ class MySchoolScraper:
         self.base_url = "https://myschool.ng"
         self.session = requests.Session()
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0'
         }
 
     def get_soup(self, url):
         try:
             response = self.session.get(url, headers=self.headers, timeout=10)
+            if response.status_code != 200:
+                print(f"ERROR: {url} returned status {response.status_code}")
+                # Log first 200 chars to see if it's a block page
+                print(f"Preview: {response.text[:200]}")
+            
+            # Check for common bot detection patterns
+            if "captcha" in response.text.lower() or "bot detection" in response.text.lower() or "challenge-platform" in response.text:
+                print(f"WARNING: High probability of bot detection at {url}")
+                
             return BeautifulSoup(response.text, 'html.parser')
         except Exception as e:
             print(f"Error fetching {url}: {e}")
