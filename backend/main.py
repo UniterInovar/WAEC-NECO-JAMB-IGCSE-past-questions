@@ -155,6 +155,35 @@ def fetch_aloc(subject: str, count: int = 50, db: Session = Depends(get_db)):
     db.commit()
     return {"message": f"Added {questions_added} questions for {subject} using ALOC source."}
 
+@app.post("/questions/bulk")
+def bulk_upload_questions(questions: List[QuestionSchema], db: Session = Depends(get_db)):
+    print(f"DEBUG: Bulk upload request for {len(questions)} questions.")
+    added_count = 0
+    for q_data in questions:
+        # Avoid duplicates by body and source_url
+        exists = db.query(Question).filter(
+            (Question.body == q_data.body) | 
+            (Question.source_url == q_data.source_url if q_data.source_url else False)
+        ).first()
+        
+        if not exists:
+            new_q = Question(
+                body=q_data.body,
+                options=q_data.options,
+                answer=q_data.answer,
+                explanation=q_data.explanation,
+                subject=q_data.subject.lower(),
+                year=q_data.year,
+                exam_type=q_data.exam_type.lower(),
+                topic=q_data.topic or "General",
+                source_url=q_data.source_url
+            )
+            db.add(new_q)
+            added_count += 1
+    
+    db.commit()
+    return {"message": f"Bulk upload complete. Added {added_count} new questions."}
+
 @app.get("/myschool-subjects")
 def get_myschool_subjects():
     scraper = MySchoolScraper()
