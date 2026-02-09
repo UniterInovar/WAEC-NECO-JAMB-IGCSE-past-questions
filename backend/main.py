@@ -26,7 +26,7 @@ app.add_middleware(
 )
 
 class QuestionSchema(BaseModel):
-    id: int
+    id: Optional[int] = None
     body: str
     options: Optional[List[str]]
     answer: str
@@ -34,8 +34,8 @@ class QuestionSchema(BaseModel):
     subject: str
     year: Optional[int]
     exam_type: str
-    topic: Optional[str]
-    source_url: Optional[str]
+    topic: Optional[str] = "General"
+    source_url: Optional[str] = None
 
     model_config = {
         "from_attributes": True

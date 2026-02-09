@@ -9,23 +9,44 @@ from scrapers.myschool_scraper import MySchoolScraper
 
 def sync():
     # Configuration
-    REMOTE_URL = "https://waec-neco-jamb-igcse-past-questions.onrender.com" # Default from your repo name
+    DEFAULT_URL = "https://waec-neco-jamb-igcse-past-questions.onrender.com"
     
     print("=== MySchool Local Sync Tool ===")
-    print(f"Target Server: {REMOTE_URL}")
+    print("This tool scrapes questions using your local internet and pushes them to Render.")
     print("-" * 30)
 
-    # Input parameters
-    subject_query = input("Enter Subject Name (e.g., Biology): ").strip()
+    # 0. Verify URL
+    remote_url_input = input(f"Enter your Render URL (default: {DEFAULT_URL}): ").strip()
+    REMOTE_URL = remote_url_input if remote_url_input else DEFAULT_URL
+    
+    if REMOTE_URL.endswith('/'):
+        REMOTE_URL = REMOTE_URL[:-1]
+
+    print(f"\nTesting connection to {REMOTE_URL}...")
+    try:
+        # Check if server is alive and has the bulk endpoint
+        test_resp = requests.get(f"{REMOTE_URL}/myschool-subjects")
+        if test_resp.status_code == 200:
+            print("Successfully connected to Remote Server!")
+        else:
+            print(f"Server returned status {test_resp.status_code}. Please verify the URL above is correct.")
+            return
+    except Exception as e:
+        print(f"Error: Could not connect to {REMOTE_URL}. {e}")
+        return
+
+    # 1. Input parameters
+    subject_query = input("\nEnter Subject Name (e.g., Biology): ").strip()
     exam_type = input("Enter Exam Type (jamb/waec/neco): ").strip().lower()
     limit = int(input("Enter max questions to scrape (default 50): ") or 50)
     
     scraper = MySchoolScraper()
     
-    # 1. Get Subject URL
-    print("\nFetching subject list...")
+    # 2. Get Subject URL
+    print("\nFetching subject list from scraper...")
     subjects = scraper.scrape_subjects()
     subject_url = None
+    subject_name = None
     for s in subjects:
         if s['name'].lower() == subject_query.lower():
             subject_url = s['url']
@@ -36,24 +57,21 @@ def sync():
         print(f"Error: Subject '{subject_query}' not found. Check subjects.json for valid names.")
         return
 
-    # 2. Get Existing URLs from Remote to avoid duplicates
-    print(f"Checking existing questions on remote server...")
+    # 3. Get Existing URLs from Remote to avoid duplicates
+    print(f"Checking existing questions on remote server for {subject_name}...")
     try:
-        # We'll fetch all questions to get their source URLs
         resp = requests.get(f"{REMOTE_URL}/questions?subject={subject_name.lower()}")
         if resp.status_code == 200:
             existing_questions = resp.json()
             existing_urls = [q['source_url'] for q in existing_questions if q.get('source_url')]
             print(f"Found {len(existing_urls)} existing questions on remote.")
         else:
-            print("Warning: Could not fetch existing questions. Proceeding with clear list.")
             existing_urls = []
-    except Exception as e:
-        print(f"Connection Error: {e}")
+    except Exception:
         existing_urls = []
 
-    # 3. Scrape Locally
-    print(f"\nScraping {subject_name} ({exam_type}) locally (this bypasses Cloudflare blocks)...")
+    # 4. Scrape Locally
+    print(f"\nScraping {subject_name} ({exam_type}) locally...")
     scraped_data = scraper.scrape_questions(
         subject_url, 
         limit=limit, 
@@ -63,12 +81,12 @@ def sync():
     )
 
     if not scraped_data:
-        print("No new questions found to sync.")
+        print("No new questions found. All questions might already be on the server.")
         return
 
     print(f"\nSuccessfully scraped {len(scraped_data)} new questions.")
     
-    # 4. Push to Remote
+    # 5. Push to Remote
     confirm = input(f"Do you want to upload these {len(scraped_data)} questions to {REMOTE_URL}? (y/n): ")
     if confirm.lower() != 'y':
         print("Upload cancelled.")
@@ -84,7 +102,8 @@ def sync():
         )
         
         if sync_resp.status_code == 200:
-            print(f"Success! {sync_resp.json().get('message')}")
+            print(f"Success! Server message: {sync_resp.json().get('message')}")
+            print("Refresh your website dashboard to see the new questions.")
         else:
             print(f"Error {sync_resp.status_code}: {sync_resp.text}")
     except Exception as e:
