@@ -51,54 +51,81 @@ def ultimate_sync():
     
     if choice == "2":
         print("\n--- ALOC API Sync ---")
-        print("Note: ALOC mostly provides Objective questions for JAMB/WAEC/NECO.")
         subject = input("Subject (e.g. Chemistry): ").strip().lower()
         count = input("Count [50]: ").strip() or "50"
         
-        token = input("\nEnter your ALOC Access Token (Get one at aloc.ng): ").strip()
+        token = input("\nEnter your ALOC Access Token (Get one at aloc.ng/api): ").strip()
         if not token:
-            print("ERROR: ALOC requires an Access Token for bulk syncing. Please get one at https://aloc.ng")
+            print("ERROR: ALOC Token is required.")
             return
 
-        print(f"\nFetching {count} {subject} questions from ALOC API...")
+        debug = input("Enable Debug Mode? (y/n) [n]: ").strip().lower() == 'y'
+
+        print(f"\nFetching from ALOC API...")
         aloc_url = f"https://questions.aloc.com.ng/api/v2/m?subject={subject}&count={count}"
-        headers = {"AccessToken": token}
         
-        try:
-            r = requests.get(aloc_url, headers=headers, timeout=30)
-            if r.status_code != 200:
-                print(f"ALOC API Error {r.status_code}: {r.text}")
-                return
+        # Try different header variations
+        header_options = [
+            {"AccessToken": token},
+            {"accessToken": token},
+            {"Authorization": f"Bearer {token}"}
+        ]
+        
+        success = False
+        data = []
+        for headers in header_options:
+            try:
+                if debug: print(f"Trying headers: {list(headers.keys())}")
+                r = requests.get(aloc_url, headers=headers, timeout=30)
+                if r.status_code == 200:
+                    data = r.json().get('data', [])
+                    success = True
+                    break
+                elif debug:
+                    print(f"Failed with {list(headers.keys())}: {r.status_code}")
+                    print(f"Response: {r.text[:200]}")
+            except Exception as e:
+                if debug: print(f"Error with {list(headers.keys())}: {e}")
+
+        if not success:
+            print("\n!!! AUTHENTICATION FAILED (401) !!!")
+            print("1. Make sure you copied the 'Access Token', NOT the 'Client ID'.")
+            print("2. Check if your token is active on https://aloc.ng/api")
+            print("3. Try a smaller count (e.g., 50) as 1000 might be blocked for free tokens.")
+            return
             
-            data = r.json().get('data', [])
-            if not data:
-                print("No questions returned from ALOC for this subject.")
-                return
-                
-            print(f"Fetched {len(data)} questions. Formatting...")
-            formatted = []
-            for q in data:
-                options = [q['option']['a'], q['option']['b'], q['option']['c'], q['option']['d']]
-                if q['option'].get('e'): options.append(q['option']['e'])
+        print(f"Fetched {len(data)} questions. Formatting...")
+        formatted = []
+        for q in data:
+            # Handle potential different formats from ALOC
+            try:
+                opt = q.get('option', {})
+                options = [opt.get('a'), opt.get('b'), opt.get('c'), opt.get('d')]
+                options = [o for o in options if o]
+                if opt.get('e'): options.append(opt['e'])
                 
                 formatted.append({
-                    "body": q['question'],
+                    "body": q.get('question', ''),
                     "options": options,
-                    "answer": q['answer'].upper() if q['answer'] else 'A',
+                    "answer": q.get('answer', 'A').upper(),
                     "explanation": q.get('solution'),
                     "subject": subject,
-                    "year": int(q['examyear']) if str(q.get('examyear')).isdigit() else None,
+                    "year": int(q.get('examyear')) if str(q.get('examyear')).isdigit() else None,
                     "exam_type": q.get('examtype', 'jamb').lower(),
                     "question_type": "objective",
                     "topic": "General",
-                    "source_url": f"aloc-{q['id']}"
+                    "source_url": f"aloc-{q.get('id')}"
                 })
-            
-            print(f"Sending to your Render server at {server_url}...")
-            res = requests.post(f"{server_url}/questions/bulk", json=formatted)
-            print(f"Server Response: {res.json().get('message', res.text)}")
-        except Exception as e:
-            print(f"ALOC Sync Failed: {e}")
+            except Exception as e:
+                if debug: print(f"Skipping a question due to format error: {e}")
+
+        if not formatted:
+            print("No valid questions found in ALOC response.")
+            return
+
+        print(f"Sending to your Render server at {server_url}...")
+        res = requests.post(f"{server_url}/questions/bulk", json=formatted)
+        print(f"Server Response: {res.json().get('message', res.text)}")
         return
 
     # 4. Scrape Mode
