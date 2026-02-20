@@ -50,11 +50,12 @@ def ultimate_sync():
     choice = input("Choice [1]: ").strip() or "1"
     
     if choice == "2":
-        print("\n--- ALOC API Sync ---")
+        print("\n--- ALOC API Sync (Now FastQ) ---")
         subject = input("Subject (e.g. Chemistry): ").strip().lower()
-        count = input("Count [50]: ").strip() or "50"
+        count = input("Count [100]: ").strip() or "100"
         
-        token = input("\nEnter your ALOC Access Token (Get one at aloc.ng/api): ").strip()
+        print("\nGet your API Access Token here: https://questions.aloc.com.ng/")
+        token = input("Enter your Access Token: ").strip()
         if not token:
             print("ERROR: ALOC Token is required.")
             return
