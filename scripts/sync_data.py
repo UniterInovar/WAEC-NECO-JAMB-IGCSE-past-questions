@@ -11,7 +11,7 @@ def sync():
     # Configuration
     DEFAULT_URL = "https://waec-neco-jamb-igcse-past-questions.onrender.com"
     
-    print("=== MySchool Local Sync Tool ===")
+    print("=== MySchool Local Sync Tool (v1.1) ===")
     print("This tool scrapes questions using your local internet and pushes them to Render.")
     print("-" * 30)
 
@@ -107,7 +107,7 @@ def sync():
                 # If cached as empty, we only skip if it's an older year.
                 # For recent years or if the user is explicitly trying to sync, we might want to retry.
                 if year < 2010:
-                    print(f"  Year {year}: Cache shows 0 questions. Skipping.")
+                    print(f"  Year {year}: Cache shows 0 questions. Skipping (use --clear to retry).")
                     continue
                 else:
                     print(f"  Year {year}: Cache empty. Attempting re-scrape...")

@@ -26,9 +26,9 @@ class MySchoolScraper:
 
     def get_soup(self, url):
         try:
-            # Random delay to avoid quick sequential requests
+            # Random delay to avoid quick sequential requests (more conservative)
             import random
-            time.sleep(random.uniform(0.5, 1.5))
+            time.sleep(random.uniform(1.0, 3.0))
             
             response = self.session.get(url, headers=self.headers, timeout=10)
             self.last_status = response.status_code
