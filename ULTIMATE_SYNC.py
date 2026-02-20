@@ -51,8 +51,9 @@ def ultimate_sync():
     
     if choice == "2":
         print("\n--- ALOC API Sync (Now FastQ) ---")
+        print("Tip: Use a small count (e.g. 50) to avoid 'Read Timeout' errors.")
         subject = input("Subject (e.g. Chemistry): ").strip().lower()
-        count = input("Count [100]: ").strip() or "100"
+        count = input("Count [50]: ").strip() or "50"
         
         print("\nGet your API Access Token here: https://questions.aloc.com.ng/")
         token = input("Enter your Access Token: ").strip()
@@ -77,7 +78,8 @@ def ultimate_sync():
         for headers in header_options:
             try:
                 if debug: print(f"Trying headers: {list(headers.keys())}")
-                r = requests.get(aloc_url, headers=headers, timeout=30)
+                # Increased timeout to 60s for large requests
+                r = requests.get(aloc_url, headers=headers, timeout=60)
                 if r.status_code == 200:
                     data = r.json().get('data', [])
                     success = True
@@ -85,14 +87,19 @@ def ultimate_sync():
                 elif debug:
                     print(f"Failed with {list(headers.keys())}: {r.status_code}")
                     print(f"Response: {r.text[:200]}")
+            except requests.exceptions.Timeout:
+                print(f"\n!!! ERROR: REQUEST TIMED OUT !!!")
+                print(f"The ALOC server is taking too long to pack {count} questions.")
+                print("FIX: Run again and use a smaller Count (like 50).")
+                return
             except Exception as e:
                 if debug: print(f"Error with {list(headers.keys())}: {e}")
 
         if not success:
-            print("\n!!! AUTHENTICATION FAILED (401) !!!")
+            print("\n!!! AUTHENTICATION FAILED !!!")
             print("1. Make sure you copied the 'Access Token', NOT the 'Client ID'.")
-            print("2. Check if your token is active on https://aloc.ng/api")
-            print("3. Try a smaller count (e.g., 50) as 1000 might be blocked for free tokens.")
+            print("2. Check if your token is active on https://questions.aloc.com.ng/")
+            print("3. Try a very small count (e.g., 10) to test if your token works.")
             return
             
         print(f"Fetched {len(data)} questions. Formatting...")
