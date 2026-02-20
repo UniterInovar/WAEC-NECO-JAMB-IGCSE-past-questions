@@ -50,12 +50,16 @@ class MySchoolScraper:
                 
                 if response.status_code == 403:
                     print(f"WARNING: 403 Forbidden at {url}. Attempt {attempt+1}/{max_retries}")
+                    self.was_blocked = True
                     if attempt < max_retries - 1:
                         time.sleep(10) # Heavy delay on fail
                         continue
                 
-                if "captcha" in response.text.lower() or "bot detection" in response.text.lower() or "challenge-platform" in response.text or response.status_code == 403:
-                    print(f"WARNING: High probability of bot detection at {url}")
+                # Check for common bot detection patterns in HTML
+                bot_keywords = ["captcha", "bot detection", "challenge-platform", "one more step", "please verify you are a human"]
+                text_lower = response.text.lower()
+                if any(k in text_lower for k in bot_keywords):
+                    print(f"WARNING: Bot detection keywords found at {url}")
                     self.was_blocked = True
                 else:
                     self.was_blocked = False
@@ -357,14 +361,19 @@ class MySchoolScraper:
                         if not soup:
                             break
 
-                        # Find all links that contain "View Answer & Discuss"
-                        all_links = soup.find_all('a')
+                        # Find all links that contain "View Answer" or "Discuss"
+                        all_links = soup.find_all('a', href=re.compile(r'/classroom/questions/'))
                         detail_links = []
                         for l in all_links:
-                            if "View Answer & Discuss" in l.get_text():
+                            link_text = l.get_text().strip()
+                            if "View Answer" in link_text or "Discuss" in link_text or "Question Detail" in link_text:
                                 detail_links.append(l)
 
                         if not detail_links:
+                            # If no detail links but many other links exist, maybe the text changed
+                            # Look specifically for links that look like question links
+                            if len(all_links) > 10:
+                                print(f"DEBUG: Found {len(all_links)} links but none matched 'View Answer'. Trying fallback...")
                             break
 
                         urls_to_fetch = []
