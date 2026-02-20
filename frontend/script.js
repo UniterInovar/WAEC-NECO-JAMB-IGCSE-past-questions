@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const ingestBtn = document.getElementById('ingest-btn');
     const yearSelect = document.getElementById('year-select');
     const topicSelect = document.getElementById('topic-select');
+    const typeSelect = document.getElementById('type-select');
     const searchInput = document.getElementById('search-input');
     const currentTitle = document.getElementById('current-title');
     const sidebarItems = document.querySelectorAll('.sidebar nav li');
@@ -14,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchFilters() {
         try {
-            const response = await fetch('/filters');
+            const response = await fetch(`/filters?subject=${encodeURIComponent(currentSubject)}&exam_type=${currentExamType}`);
             const data = await response.json();
 
             // Populate Year Select
@@ -26,6 +27,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const currentTopicValue = topicSelect.value;
             topicSelect.innerHTML = '<option value="">All Topics</option>' +
                 data.topics.map(t => `<option value="${t}" ${t == currentTopicValue ? 'selected' : ''}>${t}</option>`).join('');
+
+            // Populate Type Select (in case it changes)
+            const currentTypeValue = typeSelect.value;
+            typeSelect.innerHTML = '<option value="">All Types</option>' +
+                data.question_types.map(t => `<option value="${t}" ${t == currentTypeValue ? 'selected' : ''}>${t.toUpperCase()}</option>`).join('');
         } catch (error) {
             console.error('Error fetching filters:', error);
         }
@@ -60,7 +66,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const year = yearSelect.value;
             const topic = topicSelect.value;
-            const url = `/questions?subject=${currentSubject}&exam_type=${currentExamType}${year ? `&year=${year}` : ''}${topic ? `&topic=${encodeURIComponent(topic)}` : ''}`;
+            const type = typeSelect.value;
+            const url = `/questions?subject=${currentSubject}&exam_type=${currentExamType}${year ? `&year=${year}` : ''}${topic ? `&topic=${encodeURIComponent(topic)}` : ''}${type ? `&question_type=${type}` : ''}`;
 
             const response = await fetch(url);
             let questions = await response.json();
@@ -79,8 +86,9 @@ document.addEventListener('DOMContentLoaded', () => {
             questions.forEach(q => {
                 const card = document.createElement('div');
                 card.className = 'question-card';
+                const qTypeLabel = q.question_type ? q.question_type.toUpperCase() : 'OBJECTIVE';
                 card.innerHTML = `
-                    <div class="q-meta">${q.exam_type.toUpperCase()} ${q.year || ''} | ${q.topic || 'General'}</div>
+                    <div class="q-meta">${q.exam_type.toUpperCase()} ${q.year || ''} | ${qTypeLabel} | ${q.topic || 'General'}</div>
                     <p class="question-text">${q.body}</p>
                     <div class="options">
                         ${q.options ? q.options.map((opt, i) => `<div class="option"><strong>${String.fromCharCode(65 + i)}:</strong> ${opt}</div>`).join('') : ''}
@@ -138,18 +146,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             let url;
+            let options = { method: 'POST' };
+
             if (source === 'myschool') {
-                if (!selectedOption.dataset.url) {
-                    throw new Error('Subject URL not found for MySchool ingestion.');
-                }
-                const subjectUrl = selectedOption.dataset.url;
-                // Add currentExamType to filter scraper results
-                url = `/scrape/myschool?subject_url=${encodeURIComponent(subjectUrl)}&subject_name=${encodeURIComponent(subjectName)}&limit=200&min_year=2000&exam_type=${currentExamType}`;
+                const yearFilter = yearSelect.value;
+                const typeFilter = typeSelect.value;
+
+                url = `/scrape/myschool?subject=${encodeURIComponent(currentSubject)}&exam_type=${currentExamType}&limit=200`;
+                if (yearFilter) url += `&year=${yearFilter}`;
+                if (typeFilter) url += `&question_type=${typeFilter}`;
             } else if (source === 'aloc') {
                 url = `/fetch-aloc?subject=${encodeURIComponent(subjectName)}&count=100`;
+                options = { method: 'GET' }; // ALOC remains GET for now
             }
 
-            const response = await fetch(url);
+            const response = await fetch(url, options);
             const result = await response.json();
 
             if (!response.ok) {
@@ -182,17 +193,20 @@ document.addEventListener('DOMContentLoaded', () => {
             const subjectText = subjectSelect.options[subjectSelect.selectedIndex]?.text || currentSubject;
             currentTitle.innerText = `${currentExamType.toUpperCase()} ${subjectText} Past Questions`;
 
+            fetchFilters();
             fetchQuestions();
         });
     });
 
     subjectSelect.addEventListener('change', () => {
         currentSubject = subjectSelect.value;
+        fetchFilters();
         fetchQuestions();
     });
 
     yearSelect.addEventListener('change', fetchQuestions);
     topicSelect.addEventListener('change', fetchQuestions);
+    typeSelect.addEventListener('change', fetchQuestions);
 
     ingestBtn.addEventListener('click', ingestQuestions);
     clearDbBtn.addEventListener('click', clearDatabase);

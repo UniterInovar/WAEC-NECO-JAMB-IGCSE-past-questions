@@ -1,3 +1,4 @@
+import os
 from sqlalchemy import Column, Integer, String, Text, JSON, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -14,10 +15,18 @@ class Question(Base):
     subject = Column(String(100))
     year = Column(Integer)
     exam_type = Column(String(50)) # jamb, waec, neco, nabteb, igcse
+    question_type = Column(String(50), default='objective') # objective, theory
     topic = Column(String(200))
     source_url = Column(String(500), unique=True, index=True)
 
-engine = create_engine('sqlite:///./past_questions.db')
+# Database configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./past_questions.db")
+
+# Fix for Render/Heroku PostgreSQL URLs: postgres:// -> postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():

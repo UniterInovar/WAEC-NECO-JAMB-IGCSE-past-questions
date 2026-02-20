@@ -152,3 +152,4 @@ Thumbs.db
 past_questions.db
 *.json-journal
 subjects.json.bak
+data/

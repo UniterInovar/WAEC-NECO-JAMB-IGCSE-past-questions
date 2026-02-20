@@ -34,6 +34,7 @@ class QuestionSchema(BaseModel):
     subject: str
     year: Optional[int]
     exam_type: str
+    question_type: str = "objective"
     topic: Optional[str] = "General"
     source_url: Optional[str] = None
 
@@ -81,7 +82,7 @@ def seed_mock(db: Session = Depends(get_db)):
     return {"message": "Database seeded with mock questions"}
 
 @app.get("/questions", response_model=List[QuestionSchema])
-def read_questions(subject: Optional[str] = None, year: Optional[int] = None, exam_type: Optional[str] = None, topic: Optional[str] = None, db: Session = Depends(get_db)):
+def read_questions(subject: Optional[str] = None, year: Optional[int] = None, exam_type: Optional[str] = None, question_type: Optional[str] = None, topic: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(Question)
     if subject:
         query = query.filter(Question.subject.ilike(subject))
@@ -89,26 +90,37 @@ def read_questions(subject: Optional[str] = None, year: Optional[int] = None, ex
         query = query.filter(Question.year == year)
     if exam_type:
         query = query.filter(Question.exam_type.ilike(exam_type))
+    if question_type:
+        query = query.filter(Question.question_type.ilike(question_type))
     if topic:
         query = query.filter(Question.topic.ilike(topic))
     return query.all()
 
 @app.get("/filters")
-def get_filters(db: Session = Depends(get_db)):
-    # Use distinct and cast to lower/case-insensitive where possible
-    subjects = db.query(Question.subject).distinct().all()
-    years = db.query(Question.year).distinct().all()
-    topics = db.query(Question.topic).distinct().all()
+def get_filters(subject: Optional[str] = None, exam_type: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(Question)
+    if subject:
+        query = query.filter(Question.subject.ilike(subject))
+    if exam_type:
+        query = query.filter(Question.exam_type.ilike(exam_type))
     
-    # Handle duplicates and case sensitivity in Python for simplicity
+    # Use distinct values from the filtered query
+    subjects = db.query(Question.subject).distinct().all() # Keep all subjects available for selection
+    years = query.with_entities(Question.year).distinct().all()
+    topics = query.with_entities(Question.topic).distinct().all()
+    q_types = query.with_entities(Question.question_type).distinct().all()
+    
+    # Handle duplicates and case sensitivity in Python
     unique_subjects = sorted(list(set(s[0].capitalize() for s in subjects if s[0])))
     unique_years = sorted([y[0] for y in years if y[0]], reverse=True)
     unique_topics = sorted(list(set(t[0] for t in topics if t[0])))
+    unique_types = sorted(list(set(qt[0].lower() for qt in q_types if qt[0])))
     
     return {
         "subjects": unique_subjects,
         "years": unique_years,
-        "topics": unique_topics
+        "topics": unique_topics,
+        "question_types": unique_types
     }
 
 @app.get("/fetch-aloc")
@@ -147,6 +159,7 @@ def fetch_aloc(subject: str, count: int = 50, db: Session = Depends(get_db)):
                 subject=subject.lower(),
                 year=int(q_data['examyear']) if q_data.get('examyear') and str(q_data['examyear']).isdigit() else None,
                 exam_type=q_data.get('examtype', 'jamb').lower(),
+                question_type='objective', # ALOC is almost exclusively objective
                 topic="General"
             )
             db.add(new_q)
@@ -160,10 +173,15 @@ def bulk_upload_questions(questions: List[QuestionSchema], db: Session = Depends
     print(f"DEBUG: Bulk upload request for {len(questions)} questions.")
     added_count = 0
     for q_data in questions:
-        # Avoid duplicates by body and source_url
+        # Avoid duplicates by body and metadata OR source_url
         exists = db.query(Question).filter(
-            (Question.body == q_data.body) | 
-            (Question.source_url == q_data.source_url if q_data.source_url else False)
+            (Question.source_url == q_data.source_url if q_data.source_url else False) | 
+            (
+                (Question.body == q_data.body) & 
+                (Question.subject == q_data.subject.lower()) & 
+                (Question.year == q_data.year) & 
+                (Question.exam_type == q_data.exam_type.lower())
+            )
         ).first()
         
         if not exists:
@@ -175,6 +193,7 @@ def bulk_upload_questions(questions: List[QuestionSchema], db: Session = Depends
                 subject=q_data.subject.lower(),
                 year=q_data.year,
                 exam_type=q_data.exam_type.lower(),
+                question_type=q_data.question_type.lower(),
                 topic=q_data.topic or "General",
                 source_url=q_data.source_url
             )
@@ -195,21 +214,34 @@ def clear_questions(db: Session = Depends(get_db)):
     db.commit()
     return {"message": "All questions have been deleted from the database"}
 
-@app.get("/scrape/myschool")
-def scrape_myschool(subject_url: str, subject_name: str, limit: int = 20, min_year: int = 2000, exam_type: Optional[str] = None, db: Session = Depends(get_db)):
-    print(f"DEBUG: Scrape request for {subject_name} ({exam_type}) from {subject_url}. Min Year: {min_year}, Limit: {limit}")
+@app.post("/scrape/myschool")
+def scrape_myschool(
+    subject: str, 
+    exam_type: Optional[str] = "jamb", 
+    year: Optional[int] = None, 
+    limit: Optional[int] = 50,
+    question_type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     scraper = MySchoolScraper()
+    subject_url = f"{scraper.base_url}/classroom/{subject.lower().replace(' ', '-')}"
     
-    # Get existing source_urls to skip them in the scraper
-    existing_urls = [q.source_url for q in db.query(Question.source_url).all() if q.source_url]
-    print(f"DEBUG: Found {len(existing_urls)} existing questions in DB.")
+    # Get existing URLs to avoid duplicates
+    existing_urls = [q.source_url for q in db.query(Question).filter(Question.subject == subject.lower()).all() if q.source_url]
     
-    scraped_data = scraper.scrape_questions(subject_url, limit=limit, min_year=min_year, existing_urls=existing_urls, exam_type=exam_type)
-    
+    questions = scraper.scrape_questions(
+        subject_url, 
+        limit=limit, 
+        min_year=year if year else 2000, 
+        max_year=year if year else None,
+        existing_urls=existing_urls,
+        exam_type=exam_type,
+        question_type=question_type
+    )
     # Check if we were likely blocked
     # We can check a flag or just assume based on 0 results if we saw 403 in inner logs
     # To be precise, let's look at the result count and the fact that we confirmed blocking
-    if not scraped_data:
+    if not questions:
         # We need a way for the scraper to communicate the block back up.
         # For now, if it's 0 and we are on Render, it's almost certainly a block.
         # Let's check status_code from a dummy request
@@ -225,7 +257,15 @@ def scrape_myschool(subject_url: str, subject_name: str, limit: int = 20, min_ye
     questions_added = 0
     for q_data in scraped_data:
         # Final safety check against duplicates
-        exists = db.query(Question).filter(Question.source_url == q_data['source_url']).first()
+        exists = db.query(Question).filter(
+            (Question.source_url == q_data['source_url']) |
+            (
+                (Question.body == q_data['body']) & 
+                (Question.subject == subject_name.lower()) & 
+                (Question.year == q_data['year']) & 
+                (Question.exam_type == q_data['exam_type'].lower())
+            )
+        ).first()
         if not exists:
             new_q = Question(
                 body=q_data['body'],
@@ -235,6 +275,7 @@ def scrape_myschool(subject_url: str, subject_name: str, limit: int = 20, min_ye
                 subject=subject_name,
                 year=q_data['year'],
                 exam_type=q_data['exam_type'],
+                question_type=q_data.get('question_type', 'objective'),
                 topic=q_data.get('topic', 'General'),
                 source_url=q_data['source_url']
             )

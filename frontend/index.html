@@ -36,11 +36,18 @@
                     <select id="topic-select">
                         <option value="">All Topics</option>
                     </select>
+                    <select id="type-select">
+                        <option value="">All Types</option>
+                        <option value="objective">Objective</option>
+                        <option value="theory">Theory</option>
+                    </select>
                     <select id="source-select">
                         <option value="myschool">MySchool (Scraper)</option>
                         <option value="aloc">ALOC (API)</option>
                     </select>
                     <button id="ingest-btn">Ingest Questions</button>
+                    <p class="persistence-hint">Note: Data is temporary if on Render. Use local sync for persistence.
+                    </p>
                     <button id="clear-db-btn" class="danger">Clear DB</button>
                     <input type="text" id="search-input" placeholder="Search questions...">
                 </div>

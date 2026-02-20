@@ -12,10 +12,13 @@ if os.path.exists(db_path):
         if 'source_url' not in columns:
             cursor.execute('ALTER TABLE questions ADD COLUMN source_url VARCHAR(500)')
             cursor.execute('CREATE UNIQUE INDEX idx_questions_source_url ON questions (source_url)')
-            conn.commit()
-            print('Migration successful: source_url added.')
-        else:
-            print('Migration skipped: source_url already exists.')
+            print('Migration: source_url added.')
+        
+        if 'question_type' not in columns:
+            cursor.execute('ALTER TABLE questions ADD COLUMN question_type VARCHAR(50) DEFAULT "objective"')
+            print('Migration: question_type added.')
+        
+        conn.commit()
     except Exception as e:
         print(f'Migration error: {e}')
     finally:

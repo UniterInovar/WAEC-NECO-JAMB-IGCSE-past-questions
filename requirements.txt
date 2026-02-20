@@ -9,3 +9,5 @@ pdfplumber
 python-dotenv
 gunicorn
 aiofiles
+psycopg2-binary
+

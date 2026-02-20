@@ -26,19 +26,28 @@ class MySchoolScraper:
 
     def get_soup(self, url):
         try:
+            # Random delay to avoid quick sequential requests
+            import random
+            time.sleep(random.uniform(0.5, 1.5))
+            
             response = self.session.get(url, headers=self.headers, timeout=10)
+            self.last_status = response.status_code
+            
             if response.status_code != 200:
                 print(f"ERROR: {url} returned status {response.status_code}")
                 # Log first 200 chars to see if it's a block page
                 print(f"Preview: {response.text[:200]}")
             
-            # Check for common bot detection patterns
-            if "captcha" in response.text.lower() or "bot detection" in response.text.lower() or "challenge-platform" in response.text:
+            if "captcha" in response.text.lower() or "bot detection" in response.text.lower() or "challenge-platform" in response.text or response.status_code == 403:
                 print(f"WARNING: High probability of bot detection at {url}")
+                self.was_blocked = True
+            else:
+                self.was_blocked = False
                 
             return BeautifulSoup(response.text, 'html.parser')
         except Exception as e:
             print(f"Error fetching {url}: {e}")
+            self.was_blocked = False
             return None
 
     def scrape_subjects(self):
@@ -97,18 +106,17 @@ class MySchoolScraper:
             answer = answer_tag.split('Option')[-1].strip()
 
         # Extract explanation
-        explanation_header = soup.find('h5', string=re.compile(r'Explanation'))
+        explanation_header = soup.find('h5', string=re.compile(r'Explanation', re.I))
         explanation = ""
         if explanation_header:
-            explanation_para = explanation_header.find_next('p')
-            if explanation_para:
-                explanation = self.clean_scientific_text(explanation_para)
+            # The explanation is often in a div following the h5
+            explanation_container = explanation_header.find_next(['div', 'p'])
+            if explanation_container:
+                explanation = self.clean_scientific_text(explanation_container, subject=detail_url)
             else:
                 next_node = explanation_header.next_sibling
-                if next_node and hasattr(next_node, 'text'):
-                    explanation = self.clean_scientific_text(next_node)
-                else:
-                    explanation = ""
+                if next_node:
+                    explanation = self.clean_scientific_text(next_node, subject=detail_url)
 
         # Extract exam type, year and topic
         topic = "General"
@@ -131,8 +139,15 @@ class MySchoolScraper:
 
         return answer, explanation, exam_type, year, topic, detail_url
 
-    def clean_scientific_text(self, node):
+    def clean_scientific_text(self, node, subject=""):
         """Processes a BeautifulSoup node to preserve images and clean scientific text."""
+        if not node:
+            return ""
+        
+        # Determine if we should be aggressive with chemistry formatting
+        subject_lower = subject.lower() if subject else ""
+        is_english = "english" in subject_lower
+        is_science = any(s in subject_lower for s in ["chem", "bio", "phys", "science"])
         if isinstance(node, str):
             text = node
         else:
@@ -146,49 +161,53 @@ class MySchoolScraper:
                     img['style'] = "max-width: 100%; height: auto; display: block; margin: 10px 0;"
             
             # Use decode_contents to keep tags like <sub>, <sup>, and <img>
+            # We want to keep <br>, <u>, <b>, <i> etc.
             text = node.decode_contents()
 
         if not text:
             return ""
+            
+        # Fix encoding issues (common in MySchool.ng)
+        text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
+        
+        # Replace common mis-encoded characters like U+FFFD (replacement character)
+        text = text.replace('\ufffd', "'")
 
         # Remove LaTeX delimiters which often cause (CO2) instead of CO2
         text = text.replace(r'\(', '').replace(r'\)', '').replace(r'\[', '').replace(r'\]', '')
 
-        # Handle LaTeX style subscripts/superscripts
-        text = re.sub(r'\\?_\{([^}]+)\}', r'<sub>\1</sub>', text)
-        text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
-        text = re.sub(r'_(\d)', r'<sub>\1</sub>', text)
-        text = re.sub(r'\\?\^\{([^}]+)\}', r'<sup>\1</sup>', text)
-        text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
-        text = re.sub(r'\^(\d)', r'<sup>\1</sup>', text)
-        
-        # Chemical symbols and arrows
-        text = text.replace(r'\to', '→').replace(r'\uparrow', '↑').replace(r'\downarrow', '↓')
-        text = text.replace(r'\lambda', 'λ').replace(r'\theta', 'θ')
-        text = text.replace(r'\times', '×').replace(r'\div', '÷')
+        # Handle LaTeX style subscripts/superscripts (mostly for science)
+        if is_science or not is_english:
+            text = re.sub(r'\\?_\{([^}]+)\}', r'<sub>\1</sub>', text)
+            text = re.sub(r'_\{([^}]+)\}', r'<sub>\1</sub>', text)
+            text = re.sub(r'_(\d)', r'<sub>\1</sub>', text)
+            text = re.sub(r'\\?\^\{([^}]+)\}', r'<sup>\1</sup>', text)
+            text = re.sub(r'\^\{([^}]+)\}', r'<sup>\1</sup>', text)
+            text = re.sub(r'\^(\d)', r'<sup>\1</sup>', text)
+            
+            # Chemical symbols and arrows
+            text = text.replace(r'\to', '→').replace(r'\uparrow', '↑').replace(r'\downarrow', '↓')
+            text = text.replace(r'\lambda', 'λ').replace(r'\theta', 'θ')
+            text = text.replace(r'\times', '×').replace(r'\div', '÷')
 
-        # Handle plain text chemical formulas like CO2, H2O (capital letter + digit)
-        # Only if not already inside a tag
-        def chem_sub(match):
-            return f"{match.group(1)}<sub>{match.group(2)}</sub>"
-        
-        # Pattern to find chemical formulas: Capital letter (+ lowercase) followed by digits
-        # Examples: CO2, H2SO4, KMnO4
-        text = re.sub(r'([A-Z][a-z]?)([2-9])', chem_sub, text)
-        
-        # Electronic configuration (spdf notation) - e.g., 1s2 2s2 2p6
-        # Look for digit, [spdf], then digit(s). Avoid messing up other words.
-        # Regex: \b([1-7][spdf])(\d{1,2})\b
-        text = re.sub(r'\b([1-7][spdf])(\d{1,2})\b', r'\1<sup>\2</sup>', text)
+            # Handle plain text chemical formulas like CO2, H2O (capital letter + digit)
+            def chem_sub(match):
+                return f"{match.group(1)}<sub>{match.group(2)}</sub>"
+            
+            # Pattern to find chemical formulas: Capital letter (+ lowercase) followed by digits
+            # Refining to avoid common English words/patterns
+            # Only apply if it looks like a formula (e.g., ends in digit or followed by science context)
+            text = re.sub(r'([A-Z][a-z]?)([2-9])(?![a-zA-Z])', chem_sub, text)
+            
+            # Electronic configuration (spdf notation)
+            text = re.sub(r'\b([1-7][spdf])(\d{1,2})\b', r'\1<sup>\2</sup>', text)
 
-        # Handle LaTeX fractions \frac{num}{den}
-        # We replace them with simple inline fraction: <sup>num</sup>/<sub>den</sub>
-        # This handles nested braces specifically for simple cases usually found in these questions
-        text = re.sub(r'\\frac\{([^}]+)\}\{([^}]+)\}', r'<sup>\1</sup>&frasl;<sub>\2</sub>', text)
+            # Handle LaTeX fractions \frac{num}{den}
+            text = re.sub(r'\\frac\{([^}]+)\}\{([^}]+)\}', r'<sup>\1</sup>&frasl;<sub>\2</sub>', text)
 
         return text.strip()
 
-    def process_detail_page(self, detail_url):
+    def process_detail_page(self, detail_url, force_type=None):
         """Worker function for multi-threaded scraping."""
         detail_soup = self.get_soup(detail_url)
         if not detail_soup:
@@ -203,28 +222,24 @@ class MySchoolScraper:
             body_copy = copy.copy(body_container)
             for badge in body_copy.find_all('a'):
                 badge.decompose()
-            for br in body_copy.find_all('br'):
-                br.decompose() # Remove leading BRs if any
             
             # Specific cleanup for video links/text often found in myschool
             for vid in body_copy.find_all('a', href=True):
                 if 'explanation_video' in vid['href'] or 'video' in vid.text.lower():
                     vid.decompose()
             
-            # Remove text nodes that are just "View Explanation" or similar artifacts if they remain
-            # Only remove if they are short, to avoid accidentally removing questions containing these words
             for string in body_copy.find_all(string=True):
                 s_lower = string.lower()
                 if ("explanation_video" in s_lower or "[below]" in s_lower or "view answer" in s_lower) and len(string) < 60:
                     string.replace_with("")
 
-            body = self.clean_scientific_text(body_copy)
+            body = self.clean_scientific_text(body_copy, subject=detail_url) 
         else:
             # Fallback to h3 if question-desc not found
             body_tag = detail_soup.find('h3')
             if not body_tag:
                 return None
-            body = self.clean_scientific_text(body_tag)
+            body = self.clean_scientific_text(body_tag, subject=detail_url)
             body = re.sub(r'\.{3,}$', '', body)
 
         options = []
@@ -235,7 +250,6 @@ class MySchoolScraper:
         if options_container:
             valid_items = options_container.find_all('li')
         else:
-            # Fallback as before
             found_body = False
             for item in detail_soup.find_all(['h3', 'li', 'h4', 'h5']):
                 if item.name == 'h3' and 'page-title' in item.get('class', []):
@@ -253,20 +267,13 @@ class MySchoolScraper:
             found = False
             for item in valid_items:
                 text = item.get_text(strip=True)
-                # Check if it starts with "A." or "A " or "A)" or just "A" followed by content
                 if re.match(rf'^{letter}[.\s\)]?\s*.+', text, re.IGNORECASE):
-                    # Clone node to avoid modifying the original soup
                     item_copy = copy.copy(item)
                     strong = item_copy.find('strong')
-                    # Decompose the prefix if it's in <strong> (common)
                     if strong and re.match(rf'^{letter}[.\s\)]?\s*$', strong.get_text(strip=True), re.IGNORECASE):
                         strong.decompose()
                     
-                    # Clean the scientific text in this node
-                    cleaned_html = self.clean_scientific_text(item_copy)
-                    # Strip leading dots/whitespace/letter prefixes balance
-                    # Only strip if it's literally A., A), or "A " (with a space)
-                    # This avoids stripping "A" from "Absorption"
+                    cleaned_html = self.clean_scientific_text(item_copy, subject=detail_url)
                     cleaned_html = re.sub(rf'^{letter}([.\s\)])\s*', '', cleaned_html, flags=re.IGNORECASE)
                     cleaned_html = re.sub(r'^[\s\.]+', '', cleaned_html).strip()
                     
@@ -277,114 +284,116 @@ class MySchoolScraper:
                 if not (year and year >= 2000 and letter == 'E'):
                     options.append("")
 
+        # Determine if it's objective or theory
+        non_empty_options = [o for o in options if o.strip()]
+        if force_type:
+            q_type = force_type
+        else:
+            q_type = 'objective' if len(non_empty_options) >= 2 else 'theory'
+
         return {
             'body': body,
-            'options': options,
+            'options': options if q_type == 'objective' else [],
             'answer': answer,
             'explanation': explanation,
             'exam_type': exam_type,
             'year': year,
+            'question_type': q_type,
             'topic': topic,
             'source_url': source_url
         }
 
-    def scrape_questions(self, subject_url, limit=50, min_year=2000, existing_urls=None, exam_type=None):
+    def scrape_questions(self, subject_url, limit=50, min_year=2000, max_year=None, existing_urls=None, exam_type=None, question_type=None):
         questions = []
         import datetime
-        current_year = datetime.datetime.now().year
+        current_year = max_year if max_year else datetime.datetime.now().year
         existing_urls = set(existing_urls or [])
         
         # Determine exam types to scrape
         target_types = [exam_type] if exam_type else ['jamb', 'waec', 'neco']
         
+        # Determine question types to scrape
+        # If user specifies 'theory', we should also check 'practical' as they are often separate on MySchool
+        q_types_to_try = [question_type] if question_type else ['objective', 'theory', 'practical']
+        if question_type == 'theory':
+            q_types_to_try = ['theory', 'practical']
+
         for etype in target_types:
-            if len(questions) >= limit:
-                break
-                
-            # Iterate backwards from current year to min_year
-            for year in range(current_year, min_year - 1, -1):
+            for qtype in q_types_to_try:
                 if len(questions) >= limit:
                     break
                     
-                page = 1
-                while len(questions) < limit:
-                    # Construct URL with both exam_type and exam_year for maximum precision
-                    url = f"{subject_url}?page={page}&exam_type={etype}&exam_year={year}"
-                    print(f"Scraping: {etype} {year} Page {page}")
-                    
-                    soup = self.get_soup(url)
-                    if not soup:
+                # Iterate backwards from current_year to min_year
+                for year in range(current_year, min_year - 1, -1):
+                    if len(questions) >= limit:
                         break
+                        
+                    page = 1
+                    while len(questions) < limit:
+                        # Construct URL with exam_type, exam_year, and type (objective/theory/practical)
+                        url = f"{subject_url}?page={page}&exam_type={etype}&exam_year={year}&type={qtype}"
+                        print(f"Scraping: {etype} {year} ({qtype}) Page {page}")
+                        
+                        soup = self.get_soup(url)
+                        if not soup:
+                            break
 
-                    # Find all links that contain "View Answer & Discuss"
-                    all_links = soup.find_all('a')
-                    detail_links = []
-                    for l in all_links:
-                        if "View Answer & Discuss" in l.get_text():
-                            detail_links.append(l)
+                        # Find all links that contain "View Answer & Discuss"
+                        all_links = soup.find_all('a')
+                        detail_links = []
+                        for l in all_links:
+                            if "View Answer & Discuss" in l.get_text():
+                                detail_links.append(l)
 
-                    if not detail_links:
-                        # No more questions for this specific year/type
-                        break
+                        if not detail_links:
+                            break
 
-                    urls_to_fetch = []
-                    for link in detail_links:
-                        detail_url = link.get('href')
-                        if not detail_url:
+                        urls_to_fetch = []
+                        for link in detail_links:
+                            detail_url = link.get('href')
+                            if not detail_url:
+                                continue
+                            if not detail_url.startswith('http'):
+                                detail_url = self.base_url + detail_url
+                                
+                            if detail_url not in existing_urls:
+                                urls_to_fetch.append(detail_url)
+
+                        if not urls_to_fetch:
+                            if page > 5: break
+                            page += 1
                             continue
-                        if not detail_url.startswith('http'):
-                            detail_url = self.base_url + detail_url
-                            
-                        if detail_url not in existing_urls:
-                            urls_to_fetch.append(detail_url)
-                        else:
-                            # In case we hit duplicates, but usually years are distinct
-                            pass
 
-                    if not urls_to_fetch:
-                        # If all questions on this page are already ingested, try the next page
-                        # but check if we should just break if we've seen enough
-                        if page > 5: # Safety break if we aren't finding new things
+                        # Process in parallel, passing the current qtype as the forced type
+                        # because 'practical' should be saved as 'theory' but fetched via 'practical' param
+                        forced_type = 'theory' if qtype in ['theory', 'practical'] else 'objective'
+                        
+                        with ThreadPoolExecutor(max_workers=5) as executor:
+                            results = list(executor.map(lambda u: self.process_detail_page(u, force_type=forced_type), urls_to_fetch))
+
+                        for res in results:
+                            if res:
+                                res_year = res['year']
+                                res_type = (res['exam_type'].lower() if res['exam_type'] else '')
+                                target_type = etype.lower()
+                                
+                                year_match = (res_year == year or res_year is None)
+                                type_match = (res_type == target_type or res_type == '')
+                                
+                                if year_match and type_match:
+                                    if len(questions) < limit:
+                                        if res['source_url'] not in [q['source_url'] for q in questions]:
+                                            questions.append(res)
+                        
+                        matching_in_this_batch = [r for r in results if r and (r['year'] == year or r['year'] is None) and (not r['exam_type'] or r['exam_type'].lower() == target_type)]
+                        
+                        if results and not matching_in_this_batch:
+                            print(f"No matching questions found for {etype} {year} {qtype} on Page {page}. Skipping year for this type.")
+                            break
+                        
+                        pagination = soup.find('a', href=re.compile(rf'page={page + 1}'))
+                        if not pagination:
                             break
                         page += 1
-                        continue
-
-                    # Process in parallel
-                    with ThreadPoolExecutor(max_workers=10) as executor:
-                        results = list(executor.map(self.process_detail_page, urls_to_fetch))
-
-                    for res in results:
-                        if res:
-                            # Verify year/type again as MySchool sometimes serves defaults
-                            res_year = res['year']
-                            res_type = (res['exam_type'].lower() if res['exam_type'] else '')
-                            target_type = etype.lower()
-                            
-                            # Add if it matches our criteria
-                            # Robustness: trust the requested year if page-level extraction fails
-                            year_match = (res_year == year or res_year is None)
-                            type_match = (res_type == target_type or res_type == '')
-                            
-                            if year_match and type_match:
-                                if len(questions) < limit:
-                                    if res['source_url'] not in [q['source_url'] for q in questions]:
-                                        questions.append(res)
-                            else:
-                                print(f"  Debug: Skipped question due to mismatch (Got {res_type} {res_year}, Expected {target_type} {year})")
-                    
-                    # Optimization: If we fetched a whole page and found 0 matching questions
-                    # it means MySchool is likely serving default questions because the year has no data.
-                    # We should skip to the next year.
-                    matching_in_this_batch = [r for r in results if r and (r['year'] == year or r['year'] is None) and (not r['exam_type'] or r['exam_type'].lower() == target_type)]
-                    
-                    if results and not matching_in_this_batch:
-                        print(f"No matching questions found for {etype} {year} on Page {page} (found {len(results)} other results). Skipping year.")
-                        break
-                    
-                    # Check if there is a next page for THIS specific year/type
-                    pagination = soup.find('a', href=re.compile(rf'page={page + 1}'))
-                    if not pagination:
-                        break
-                    page += 1
                     
         return questions

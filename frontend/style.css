@@ -145,6 +145,24 @@ sup {
     color: #a0c4ff;
 }
 
+u {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+
+strong,
+b {
+    color: #fff;
+    font-weight: 600;
+}
+
+em,
+i {
+    color: #cbd5e1;
+    font-style: italic;
+}
+
 .question-text img {
     max-width: 100%;
     margin: 10px 0;
@@ -189,4 +207,13 @@ sup {
     font-style: italic;
     color: #b0b0b0;
     line-height: 1.5;
+}
+
+.persistence-hint {
+    font-size: 11px;
+    color: #ffb703;
+    margin: 0;
+    max-width: 200px;
+    line-height: 1.2;
+    opacity: 0.8;
 }
