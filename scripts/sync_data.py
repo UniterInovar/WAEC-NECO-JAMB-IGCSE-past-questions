@@ -36,6 +36,26 @@ def sync():
         return
 
     # 1. Input parameters
+    print("\nSelect Data Source:")
+    print("1. MySchool (Scraped from web - often blocked)")
+    print("2. ALOC (Reliable API - requires ALOC_TOKEN on server)")
+    source_choice = input("Choice (1 or 2, default 1): ").strip() or "1"
+    
+    if source_choice == "2":
+        subject_query = input("\nEnter Subject Name (e.g., Chemistry): ").strip()
+        count = int(input("Enter number of questions to fetch (default 50): ") or 50)
+        
+        print(f"\nRequesting Remote Server to fetch {count} questions for {subject_query} via ALOC...")
+        try:
+            resp = requests.get(f"{REMOTE_URL}/fetch-aloc?subject={subject_query.lower()}&count={count}", timeout=30)
+            if resp.status_code == 200:
+                print(f"Success! {resp.json().get('message')}")
+            else:
+                print(f"Error {resp.status_code}: {resp.json().get('detail')}")
+        except Exception as e:
+            print(f"Failed to trigger ALOC fetch: {e}")
+        return
+
     subject_query = input("\nEnter Subject Name (e.g., Biology): ").strip()
     exam_type = input("Enter Exam Type (jamb/waec/neco): ").strip().lower()
     question_type = input("Enter Question Type (objective/theory, default objective): ").strip().lower() or "objective"
