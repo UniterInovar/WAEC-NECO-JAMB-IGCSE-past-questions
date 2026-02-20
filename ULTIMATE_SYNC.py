@@ -47,7 +47,69 @@ def ultimate_sync():
     print("\nSelect Source:")
     print("1. MySchool (Scrape Website - Stealth Mode)")
     print("2. ALOC (Reliable API - Requires Access Token)")
+    print("3. Deep Scan (Upload ALL existing local questions in 'data/')")
     choice = input("Choice [1]: ").strip() or "1"
+    
+    if choice == "3":
+        print("\n--- Deep Scan Mode ---")
+        print("Scanning 'data/' folder for existing questions...")
+        all_to_upload = []
+        
+        # Walk through the data directory
+        for root, dirs, files in os.walk("data"):
+            for file in files:
+                if file == "questions.json":
+                    path = os.path.join(root, file)
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            qs = json.load(f)
+                            if not qs: continue
+                            
+                        # Infer data from path if possible: data/subject/exam/year/...
+                        parts = root.replace('\\', '/').split('/')
+                        # parts looks like: ['data', 'chemistry', 'waec', '2023']
+                        inf_subject = parts[1] if len(parts) > 1 else 'unknown'
+                        inf_exam = parts[2] if len(parts) > 2 else 'waec'
+                        inf_year = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else None
+                        
+                        for q in qs:
+                            if not q.get('subject'): q['subject'] = inf_subject
+                            if not q.get('exam_type'): q['exam_type'] = inf_exam
+                            if not q.get('year') and inf_year: q['year'] = inf_year
+                            if not q.get('question_type'): q['question_type'] = 'objective'
+                            all_to_upload.append(q)
+                    except Exception as e:
+                        print(f"Error reading {path}: {e}")
+
+        if not all_to_upload:
+            print("No questions found in your 'data/' folder.")
+            return
+            
+        print(f"Found total of {len(all_to_upload)} questions locally.")
+        confirm = input("Upload ALL to Render? (y/n): ").strip().lower()
+        if confirm == 'y':
+            # Process in batches of 100 to avoid server timeouts
+            batch_size = 100
+            for i in range(0, len(all_to_upload), batch_size):
+                batch = all_to_upload[i:i+batch_size]
+                print(f"Uploading batch {i//batch_size + 1} ({i} to {i+len(batch)})...")
+                try:
+                    res = requests.post(f"{server_url}/questions/bulk", json=batch, timeout=30)
+                    if res.status_code == 200:
+                        print(f"  Result: {res.json().get('message')}")
+                    else:
+                        print(f"  SERVER ERROR {res.status_code}: {res.text[:500]}")
+                        print("\nStopping to avoid further errors. Please check your Render logs.")
+                        return
+                    
+                    # Add a small delay to avoid overwhelming the server
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    print(f"  CRITICAL ERROR: {e}")
+                    return
+            print("\nDONE! All local questions have been pushed to Render.")
+        return
     
     if choice == "2":
         print("\n--- ALOC API Sync (Now FastQ) ---")
