@@ -172,36 +172,49 @@ def fetch_aloc(subject: str, count: int = 50, db: Session = Depends(get_db)):
 def bulk_upload_questions(questions: List[QuestionSchema], db: Session = Depends(get_db)):
     print(f"DEBUG: Bulk upload request for {len(questions)} questions.")
     added_count = 0
-    for q_data in questions:
-        # Avoid duplicates by body and metadata OR source_url
-        exists = db.query(Question).filter(
-            (Question.source_url == q_data.source_url if q_data.source_url else False) | 
-            (
-                (Question.body == q_data.body) & 
-                (Question.subject == q_data.subject.lower()) & 
-                (Question.year == q_data.year) & 
-                (Question.exam_type == q_data.exam_type.lower())
-            )
-        ).first()
-        
-        if not exists:
-            new_q = Question(
-                body=q_data.body,
-                options=q_data.options,
-                answer=q_data.answer,
-                explanation=q_data.explanation,
-                subject=q_data.subject.lower(),
-                year=q_data.year,
-                exam_type=q_data.exam_type.lower(),
-                question_type=q_data.question_type.lower(),
-                topic=q_data.topic or "General",
-                source_url=q_data.source_url
-            )
-            db.add(new_q)
-            added_count += 1
+    seen_urls_in_batch = set()
     
-    db.commit()
-    return {"message": f"Bulk upload complete. Added {added_count} new questions."}
+    try:
+        for q_data in questions:
+            # Check for duplicates within the current batch first
+            if q_data.source_url and q_data.source_url in seen_urls_in_batch:
+                continue
+            
+            # Avoid duplicates by body and metadata OR source_url in DB
+            exists = db.query(Question).filter(
+                (Question.source_url == q_data.source_url if q_data.source_url else False) | 
+                (
+                    (Question.body == q_data.body) & 
+                    (Question.subject == q_data.subject.lower()) & 
+                    (Question.year == q_data.year) & 
+                    (Question.exam_type == q_data.exam_type.lower())
+                )
+            ).first()
+            
+            if not exists:
+                new_q = Question(
+                    body=q_data.body,
+                    options=q_data.options,
+                    answer=q_data.answer,
+                    explanation=q_data.explanation,
+                    subject=q_data.subject.lower(),
+                    year=q_data.year,
+                    exam_type=q_data.exam_type.lower(),
+                    question_type=q_data.question_type.lower() if q_data.question_type else 'objective',
+                    topic=q_data.topic or "General",
+                    source_url=q_data.source_url
+                )
+                db.add(new_q)
+                added_count += 1
+                if q_data.source_url:
+                    seen_urls_in_batch.add(q_data.source_url)
+        
+        db.commit()
+        return {"message": f"Bulk upload complete. Added {added_count} new questions."}
+    except Exception as e:
+        db.rollback()
+        print(f"CRITICAL ERROR IN BULK UPLOAD: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error during bulk upload: {str(e)}")
 
 @app.get("/myschool-subjects")
 def get_myschool_subjects():
